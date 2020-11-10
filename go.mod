@@ -1,6 +1,6 @@
 module golivyclient
 
-go 1.14
+go 1.15
 
 require (
 	github.com/Basic-Components/loggerhelper v0.0.1
