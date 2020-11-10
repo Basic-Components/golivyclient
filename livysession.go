@@ -77,6 +77,9 @@ func (b *Session) New(q *NewSessionQuery) error {
 		return err
 	}
 	json.Unmarshal(resBytes, b)
+	log.Info(map[string]interface{}{
+		"b": b,
+	}, "new session")
 	return nil
 }
 
