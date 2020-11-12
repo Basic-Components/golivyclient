@@ -3,6 +3,8 @@ module golivyclient
 go 1.15
 
 require (
+	github.com/AsynkronIT/goconsole v0.0.0-20160504192649-bfa12eebf716
+	github.com/AsynkronIT/protoactor-go v0.0.0-20201111170027-2796e3469e1a
 	github.com/Basic-Components/loggerhelper v0.0.1
 	github.com/json-iterator/go v1.1.9
 	github.com/kr/pretty v0.1.0 // indirect

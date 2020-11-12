@@ -1,14 +1,22 @@
-package golivyclient
+package main
+
+import (
+	"github.com/AsynkronIT/protoactor-go/actor"
+)
 
 //LivyClient livy客户端类
 type LivyClient struct {
-	BASEURL string
+	BASEURL     string
+	actorSys    *actor.ActorSystem
+	rootContext *actor.RootContext
 }
 
 //NewClient 创建一个新的livy客户端对象
 func NewClient(baseURL string) *LivyClient {
 	c := new(LivyClient)
 	c.BASEURL = baseURL
+	c.actorSys = actor.NewActorSystem()
+	c.rootContext = c.actorSys.Root
 	return c
 }
 
@@ -18,6 +26,8 @@ var Default = &LivyClient{}
 //Init 初始化livy客户端
 func (c *LivyClient) Init(baseURL string) {
 	c.BASEURL = baseURL
+	c.actorSys = actor.NewActorSystem()
+	c.rootContext = c.actorSys.Root
 }
 
 //NewBatch 创建新的Batch

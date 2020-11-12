@@ -1,4 +1,4 @@
-package main
+package golivyclient
 
 import (
 	"errors"
@@ -6,23 +6,23 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AsynkronIT/protoactor-go/actor"
-	"github.com/AsynkronIT/protoactor-go/actor/middleware"
 	log "github.com/Basic-Components/loggerhelper"
 )
 
 //Batch livy的批,用于管理固定任务
 type Batch struct {
-	Client    *LivyClient            `json:"-"`
-	URI       string                 `json:"-"`
-	Pid       *actor.PID             `json:"-"`
-	Query     *NewBatchQuery         `json:"query"`
-	CrotabStr string                 `json:"crontab"`
-	ID        int                    `json:"id"`
-	AppID     string                 `json:"appId"`
-	AppInfo   map[string]interface{} `json:"appInfo"`
-	Log       []string               `json:"log"`
-	State     string                 `json:"state"`
+	Client           *LivyClient            `json:"-"`
+	URI              string                 `json:"-"`
+	ID               int                    `json:"id"`
+	AppID            string                 `json:"appId"`
+	AppInfo          map[string]interface{} `json:"appInfo"`
+	Log              []string               `json:"log"`
+	State            string                 `json:"state"`
+	PollInterval     time.Duration          `json:"-"`
+	ChanBufferLength int                    `json:"-"`
+	listench         chan BatchUpdateMsg
+	querych          chan string
+	running          bool
 }
 
 //NewBatchQuery livy批的创建请求,用于提交固定任务
@@ -62,55 +62,53 @@ type NewBatchQuery struct {
 }
 
 //NewBatch 创建新的Batch
-func NewBatch(c *LivyClient, crotabStr string, query *NewBatchQuery) *Batch {
+func NewBatch(c *LivyClient, pollInterval time.Duration, chanBufferLength int) (*Batch, error) {
 	b := new(Batch)
 	uri := "batches"
 	b.Client = c
 	b.URI = uri
-	b.Query = query
-	b.CrotabStr = crotabStr
-	b.Pid = b.Client.rootContext.Spawn(actor.PropsFromProducer(func() actor.Actor { return b }).WithReceiverMiddleware(middleware.Logger))
-	return b
-}
-
-//Receive 满足Actor接口
-func (b *Batch) Receive(context actor.Context) {
-	switch msg := context.Message().(type) {
-	case *actor.Started:
+	b.PollInterval = pollInterval
+	b.ChanBufferLength = chanBufferLength
+	b.querych = make(chan string)
+	b.running = false
+	switch {
+	case chanBufferLength > 0:
 		{
-			log.Info(nil, "batch query start")
-			err := b.new()
-			if err != nil {
-				b.State = "error"
-				b.Close()
-			}
+			ch := make(chan BatchUpdateMsg, chanBufferLength)
+			b.listench = ch
+			return b, nil
 		}
-	case *actor.Stopping:
-		log.Info(nil, "Stopping, actor is about shut down")
-	case *actor.Stopped:
-		log.Info(nil, "Stopped, actor and its children are stopped")
-	case *actor.Restarting:
-		log.Info(nil, "Restarting, actor is about restart")
-	case []byte:
-		fmt.Printf("Hello %v\n", msg.Who)
-		panic("Ouch")
+	case chanBufferLength == 0:
+		{
+			ch := make(chan BatchUpdateMsg)
+			b.listench = ch
+			return b, nil
+		}
+	default:
+		{
+			return nil, errors.New("chanBufferLength必须为非负整数")
+		}
 	}
 }
 
+//IsRunning 检测是否在执行状态
+func (b *Batch) IsRunning() bool {
+	return b.running
+}
+
 //new 新建一个batch请求并将结果更新到自身
-func (b *Batch) new() error {
+func (b *Batch) new(q *NewBatchQuery) error {
+	if b.running {
+		return errors.New("已经在执行状态,无法请求")
+	}
 	url := fmt.Sprintf("%s/%s", b.Client.BASEURL, b.URI)
-	resBytes, err := HTTPJSONQuery(url, "POST", b.Query)
+	resBytes, err := HTTPJSONQuery(url, "POST", q)
 	if err != nil {
 		return err
 	}
 	json.Unmarshal(resBytes, b)
+	b.running = true
 	return nil
-}
-
-//Close 关闭actor
-func (b *Batch) Close() {
-	b.Client.rootContext.Stop(b.Pid)
 }
 
 //Copy 克隆一份当前的状态
@@ -145,6 +143,25 @@ func (b *Batch) ToJSONString() (string, error) {
 //ToJSON 将消息转未json
 func (b *Batch) ToJSON() ([]byte, error) {
 	return json.Marshal(b)
+}
+
+func (b *Batch) Start(q *NewBatchQuery) error {
+	err := b.new(q)
+	if err != nil {
+		return err
+	}
+ListenLoop:
+	for {
+		select {
+		case msg := <-b.listench:
+			statement(s)
+		case msg, ok := <-b.listench:
+			statement(s)
+		/* 你可以定义任意数量的 case */
+		default: /* 可选 */
+			statement(s)
+		}
+	}
 }
 
 //queryBytesInfo 请求接口获取Batch对象的信息的字节串

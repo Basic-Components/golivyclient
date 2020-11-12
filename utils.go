@@ -1,4 +1,4 @@
-package golivyclient
+package main
 
 import (
 	"bytes"
