@@ -9,6 +9,7 @@ import (
 	"github.com/AsynkronIT/protoactor-go/actor"
 	"github.com/AsynkronIT/protoactor-go/actor/middleware"
 	log "github.com/Basic-Components/loggerhelper"
+	"github.com/robfig/cron/v3"
 )
 
 //Batch livy的批,用于管理固定任务
@@ -16,6 +17,7 @@ type Batch struct {
 	Client    *LivyClient            `json:"-"`
 	URI       string                 `json:"-"`
 	Pid       *actor.PID             `json:"-"`
+	c         *cron.Cron             `json:"-"`
 	Query     *NewBatchQuery         `json:"query"`
 	CrotabStr string                 `json:"crontab"`
 	ID        int                    `json:"id"`
@@ -84,9 +86,22 @@ func (b *Batch) Receive(context actor.Context) {
 				b.State = "error"
 				b.Close()
 			}
+			b.c = cron.New()
+			b.c.AddFunc(
+				fmt.Sprintf("@every %s", b.CrotabStr),
+				func() {
+					fmt.Println("Every hour thirty, starting an hour thirty from now")
+				})
+			b.c.Start()
 		}
 	case *actor.Stopping:
-		log.Info(nil, "Stopping, actor is about shut down")
+		{
+			log.Info(nil, "Stopping, actor is about shut down")
+			if b.c != nil {
+				b.c.Stop()
+			}
+		}
+
 	case *actor.Stopped:
 		log.Info(nil, "Stopped, actor and its children are stopped")
 	case *actor.Restarting:
