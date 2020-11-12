@@ -11,13 +11,18 @@ import (
 
 //Batch livy的批,用于管理固定任务
 type Batch struct {
-	Client  *LivyClient            `json:"-"`
-	URI     string                 `json:"-"`
-	ID      int                    `json:"id"`
-	AppID   string                 `json:"appId"`
-	AppInfo map[string]interface{} `json:"appInfo"`
-	Log     []string               `json:"log"`
-	State   string                 `json:"state"`
+	Client           *LivyClient            `json:"-"`
+	URI              string                 `json:"-"`
+	ID               int                    `json:"id"`
+	AppID            string                 `json:"appId"`
+	AppInfo          map[string]interface{} `json:"appInfo"`
+	Log              []string               `json:"log"`
+	State            string                 `json:"state"`
+	PollInterval     time.Duration          `json:"-"`
+	ChanBufferLength int                    `json:"-"`
+	listench         chan BatchUpdateMsg
+	querych          chan string
+	running          bool
 }
 
 //NewBatchQuery livy批的创建请求,用于提交固定任务
@@ -57,22 +62,52 @@ type NewBatchQuery struct {
 }
 
 //NewBatch 创建新的Batch
-func NewBatch(c *LivyClient) *Batch {
+func NewBatch(c *LivyClient, pollInterval time.Duration, chanBufferLength int) (*Batch, error) {
 	b := new(Batch)
 	uri := "batches"
 	b.Client = c
 	b.URI = uri
-	return b
+	b.PollInterval = pollInterval
+	b.ChanBufferLength = chanBufferLength
+	b.querych = make(chan string)
+	b.running = false
+	switch {
+	case chanBufferLength > 0:
+		{
+			ch := make(chan BatchUpdateMsg, chanBufferLength)
+			b.listench = ch
+			return b, nil
+		}
+	case chanBufferLength == 0:
+		{
+			ch := make(chan BatchUpdateMsg)
+			b.listench = ch
+			return b, nil
+		}
+	default:
+		{
+			return nil, errors.New("chanBufferLength必须为非负整数")
+		}
+	}
 }
 
-//New 新建一个batch请求并将结果更新到自身
-func (b *Batch) New(q *NewBatchQuery) error {
+//IsRunning 检测是否在执行状态
+func (b *Batch) IsRunning() bool {
+	return b.running
+}
+
+//new 新建一个batch请求并将结果更新到自身
+func (b *Batch) new(q *NewBatchQuery) error {
+	if b.running {
+		return errors.New("已经在执行状态,无法请求")
+	}
 	url := fmt.Sprintf("%s/%s", b.Client.BASEURL, b.URI)
 	resBytes, err := HTTPJSONQuery(url, "POST", q)
 	if err != nil {
 		return err
 	}
 	json.Unmarshal(resBytes, b)
+	b.running = true
 	return nil
 }
 
@@ -110,8 +145,27 @@ func (b *Batch) ToJSON() ([]byte, error) {
 	return json.Marshal(b)
 }
 
-//BytesInfo 获取Batch对象的信息
-func (b *Batch) BytesInfo() ([]byte, error) {
+func (b *Batch) Start(q *NewBatchQuery) error {
+	err := b.new(q)
+	if err != nil {
+		return err
+	}
+ListenLoop:
+	for {
+		select {
+		case msg := <-b.listench:
+			statement(s)
+		case msg, ok := <-b.listench:
+			statement(s)
+		/* 你可以定义任意数量的 case */
+		default: /* 可选 */
+			statement(s)
+		}
+	}
+}
+
+//queryBytesInfo 请求接口获取Batch对象的信息的字节串
+func (b *Batch) queryBytesInfo() ([]byte, error) {
 	url := fmt.Sprintf("%s/%s/%d", b.Client.BASEURL, b.URI, b.ID)
 	resBytes, err := HTTPJSONQuery(url, "GET")
 	if err != nil {
@@ -120,25 +174,25 @@ func (b *Batch) BytesInfo() ([]byte, error) {
 	return resBytes, nil
 }
 
-//Info 获取Batch对象的信息
-func (b *Batch) Info() (*Batch, error) {
-	resb, err := b.BytesInfo()
-	if err != nil {
-		return nil, err
-	}
-	nb := Batch{}
-	err = json.Unmarshal(resb, &nb)
-	if err != nil {
-		return nil, err
-	}
-	nb.Client = b.Client
-	nb.URI = b.URI
-	return &nb, nil
-}
+// //queryInfo 请求接口获取Batch对象的信息
+// func (b *Batch) queryInfo() (*Batch, error) {
+// 	resb, err := b.queryBytesInfo()
+// 	if err != nil {
+// 		return nil, err
+// 	}
+// 	nb := Batch{}
+// 	err = json.Unmarshal(resb, &nb)
+// 	if err != nil {
+// 		return nil, err
+// 	}
+// 	nb.Client = b.Client
+// 	nb.URI = b.URI
+// 	return &nb, nil
+// }
 
-//Update 更新自身
-func (b *Batch) Update() ([]byte, error) {
-	resb, err := b.BytesInfo()
+//update 更新自身
+func (b *Batch) updateSelf() ([]byte, error) {
+	resb, err := b.queryBytesInfo()
 	if err != nil {
 		return nil, err
 	}
