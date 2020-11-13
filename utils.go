@@ -87,9 +87,31 @@ func MD5(data []byte) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// UpdateMsg 更新消息
-type UpdateMsg struct {
-	State string
-	New   interface{}
-	Old   interface{}
+//PutEvent 更新事件
+type PutEvent struct {
+	message string
+}
+
+//Message 获取PutEvent的message
+func (s *PutEvent) Message() string {
+	return s.message
+}
+
+//DeleteEvent 停止事件
+type DeleteEvent struct {
+}
+
+//ErrorEvent 出错事件
+type ErrorEvent struct {
+	message string
+}
+
+//Message 获取ErrorEvent的message
+func (s *ErrorEvent) Message() string {
+	return s.message
+}
+
+//Event 可以用于发出的消息接口
+type Event interface {
+	Message() string
 }

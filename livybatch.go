@@ -1,10 +1,7 @@
 package main
 
 import (
-	"errors"
 	"fmt"
-	"strings"
-	"time"
 
 	"github.com/AsynkronIT/protoactor-go/actor"
 	"github.com/AsynkronIT/protoactor-go/actor/middleware"
@@ -18,8 +15,9 @@ type Batch struct {
 	URI       string                 `json:"-"`
 	Pid       *actor.PID             `json:"-"`
 	c         *cron.Cron             `json:"-"`
-	Query     *NewBatchQuery         `json:"query"`
-	CrotabStr string                 `json:"crontab"`
+	listeners []chan Event           `json:"-"`
+	Query     *NewBatchQuery         `json:"-"`
+	CrotabStr string                 `json:"-"`
 	ID        int                    `json:"id"`
 	AppID     string                 `json:"appId"`
 	AppInfo   map[string]interface{} `json:"appInfo"`
@@ -90,25 +88,33 @@ func (b *Batch) Receive(context actor.Context) {
 			b.c.AddFunc(
 				fmt.Sprintf("@every %s", b.CrotabStr),
 				func() {
-					fmt.Println("Every hour thirty, starting an hour thirty from now")
+					// fmt.Println("Every hour thirty, starting an hour thirty from now")
+					err := b.updateSelf()
+					if err != nil {
+						log.Error(map[string]interface{}{
+							"err": err,
+						}, "query get error")
+					}
+					// } else {
+
+					// 	b.Client.rootContext.Send(b.Pid, Event{
+					// 		Name:        "UPDATE",
+					// 		MessageJSON: msg,
+					// 	})
+					// }
 				})
 			b.c.Start()
 		}
 	case *actor.Stopping:
 		{
-			log.Info(nil, "Stopping, actor is about shut down")
-			if b.c != nil {
-				b.c.Stop()
-			}
+			b.c.Stop()
+			fmt.Println("Stopping, actor is about shut down")
 		}
 
-	case *actor.Stopped:
-		log.Info(nil, "Stopped, actor and its children are stopped")
-	case *actor.Restarting:
-		log.Info(nil, "Restarting, actor is about restart")
-	case []byte:
-		fmt.Printf("Hello %v\n", msg.Who)
-		panic("Ouch")
+	case PutEvent:
+		{
+
+		}
 	}
 }
 
@@ -125,31 +131,8 @@ func (b *Batch) new() error {
 
 //Close 关闭actor
 func (b *Batch) Close() {
+	b.c.Stop()
 	b.Client.rootContext.Stop(b.Pid)
-}
-
-//Copy 克隆一份当前的状态
-func (b *Batch) Copy() *Batch {
-
-	newAppInfo := map[string]interface{}{}
-	for key, value := range b.AppInfo {
-		newAppInfo[key] = value
-	}
-	newlog := []string{}
-	for _, ele := range b.Log {
-		newlog = append(newlog, ele)
-	}
-
-	newone := Batch{
-		Client:  b.Client,
-		URI:     b.URI,
-		ID:      b.ID,
-		AppID:   b.AppID,
-		AppInfo: newAppInfo,
-		Log:     newlog,
-		State:   b.State,
-	}
-	return &newone
 }
 
 //ToJSONString 将消息转未json字符串
@@ -172,164 +155,90 @@ func (b *Batch) queryBytesInfo() ([]byte, error) {
 	return resBytes, nil
 }
 
-// //queryInfo 请求接口获取Batch对象的信息
-// func (b *Batch) queryInfo() (*Batch, error) {
-// 	resb, err := b.queryBytesInfo()
-// 	if err != nil {
-// 		return nil, err
-// 	}
-// 	nb := Batch{}
-// 	err = json.Unmarshal(resb, &nb)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-// 	nb.Client = b.Client
-// 	nb.URI = b.URI
-// 	return &nb, nil
-// }
-
 //update 更新自身
-func (b *Batch) updateSelf() ([]byte, error) {
-	resb, err := b.queryBytesInfo()
+func (b *Batch) updateSelf() error {
+	messageJSON, err := b.queryBytesInfo()
 	if err != nil {
-		return nil, err
+		return err
 	}
-	nb := Batch{}
-	err = json.Unmarshal(resb, &nb)
+	lenoldlog := len(b.Log)
+	oldstate := b.State
+	err = json.Unmarshal(messageJSON, &b)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	b.ID = nb.ID
-	b.AppID = nb.AppID
-	b.AppInfo = nb.AppInfo
-	b.Log = nb.Log
-	b.State = nb.State
-	return resb, nil
+	if b.State != oldstate || len(b.Log) != lenoldlog {
+		bjson, err := b.ToJSONString()
+		if err != nil {
+			return err
+		}
+		b.Client.rootContext.Send(
+			b.Pid,
+			PutEvent{
+				Message: bjson,
+			},
+		)
+	}
+	switch b.State {
+	case "shutting_down":
+		{
+			b.Client.rootContext.Send(
+				b.Pid,
+				DeleteEvent{},
+			)
+
+		}
+	case "error":
+		{
+			b.Client.rootContext.Send(
+				b.Pid,
+				DeleteEvent{},
+			)
+
+		}
+	case "dead":
+		{
+			b.Client.rootContext.Send(
+				b.Pid,
+				DeleteEvent{},
+			)
+
+		}
+	case "killed":
+		{
+
+			b.Client.rootContext.Send(
+				b.Pid,
+				DeleteEvent{},
+			)
+
+		}
+
+	case "success":
+		{
+			b.Client.rootContext.Send(
+				b.Pid,
+				DeleteEvent{},
+			)
+
+		}
+	}
+	return nil
 }
 
-//Kill 关闭batch所指向的任务
-func (b *Batch) Kill() error {
+//Cancel 取消任务
+func (b *Batch) Cancel() error {
 	url := fmt.Sprintf("%s/%s/%d", b.Client.BASEURL, b.URI, b.ID)
 	_, err := HTTPJSONQuery(url, "DELETE")
 	if err != nil {
 		return err
 	}
+	b.State = "cancelled"
+	b.Close()
 	return nil
 }
 
-//BatchUpdateMsg Batch更新消息
-type BatchUpdateMsg struct {
-	State string `json:"State"`
-	New   *Batch `json:"New"`
-	Old   *Batch `json:"Old"`
-}
-
-func (b *Batch) watch(interval time.Duration, ch chan BatchUpdateMsg) {
-	defer func() {
-		err := recover()
-		if err != nil {
-			errE := err.(error)
-			log.Error(map[string]interface{}{
-				"err": errE,
-			}, "batch watch error")
-			if strings.HasPrefix(errE.Error(), "未找到资源") {
-				ch <- BatchUpdateMsg{
-					State: "cancelled",
-				}
-			} else {
-				ch <- BatchUpdateMsg{
-					State: "watch_err",
-				}
-			}
-
-		}
-		close(ch)
-	}()
-	var oldbb []byte
-	var newbb []byte
-	bb, err := b.ToJSON()
-	if err != nil {
-		panic(err)
-	}
-	oldbb = bb
-OuterLoop:
-	for {
-		oldb := b.Copy()
-		gb, err := b.Update()
-		if err != nil {
-			panic(err)
-		}
-		if newbb != nil {
-			oldbb = newbb
-			newbb = gb
-		} else {
-			newbb = gb
-		}
-
-		msg := BatchUpdateMsg{
-			State: b.State,
-			New:   b,
-			Old:   oldb,
-		}
-		switch b.State {
-		case "shutting_down":
-			{
-				ch <- msg
-				break OuterLoop
-			}
-		case "error":
-			{
-				ch <- msg
-				break OuterLoop
-			}
-		case "dead":
-			{
-				ch <- msg
-				break OuterLoop
-			}
-		case "killed":
-			{
-
-				ch <- msg
-				break OuterLoop
-			}
-
-		case "success":
-			{
-				ch <- msg
-				break OuterLoop
-			}
-		default:
-			{
-				if MD5(oldbb) != MD5(newbb) {
-					ch <- msg
-				}
-				time.Sleep(interval)
-			}
-		}
-	}
-}
-
 //Watch 轮询监听状态变化
-//@interval time.Duration 轮询间隔时间
-//@chanBuffer int 队列长度
-func (b *Batch) Watch(interval time.Duration, chanBuffer int) (chan BatchUpdateMsg, error) {
-	switch {
-	case chanBuffer > 0:
-		{
-			ch := make(chan BatchUpdateMsg, chanBuffer)
-			go b.watch(interval, ch)
-			return ch, nil
-		}
-	case chanBuffer == 0:
-		{
-			ch := make(chan BatchUpdateMsg)
-			go b.watch(interval, ch)
-			return ch, nil
-		}
-	default:
-		{
-			return nil, errors.New("chanBuffer必须为非负数")
-		}
-	}
+func (b *Session) Watch(chan Event) {
+
 }
