@@ -24,9 +24,9 @@ func NewClient(baseURL string) *LivyClient {
 var Default = &LivyClient{}
 
 //Init 初始化livy客户端
-func (c *LivyClient) Init(baseURL string) {
+func (c *LivyClient) Init(baseURL string, actorSys *actor.ActorSystem) {
 	c.BASEURL = baseURL
-	c.actorSys = actor.NewActorSystem()
+	c.actorSys = actorSys
 	c.rootContext = c.actorSys.Root
 }
 
@@ -36,7 +36,7 @@ func (c *LivyClient) NewBatch() *Batch {
 	return nb
 }
 
-//NewSession 创建新的Session
-func (c *LivyClient) NewSession() *Session {
-	return NewSession(c)
-}
+// //NewSession 创建新的Session
+// func (c *LivyClient) NewSession() *Session {
+// 	return NewSession(c)
+// }
